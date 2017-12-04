@@ -1,0 +1,177 @@
+---
+title: "GDSC v17 data"
+author: "Howard Lightfoot"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+The *gdscdata* package contains drug response data from the Genomics of Drug Sensitivity in Cancer project (GDSC) in a format that can be processed and analysed using the *gdscIC50* package. This data is also available to browse and for download from the website http://www.cancerrxgene.org.
+
+The data in the *gdscdata* package is from release 6.0 of the website and is version 17a (v17) of the gdsc data. It is the same data as used in [Iorio, F. et al. Cell 2016 167(1):260-274](https://doi.org/10.1016/j.cell.2016.06.017). However, since the initial release some cell lines previously included in the data set have been removed as part of ongoing quality control. In addition a small number of cell lines have annotation updated, in particular to COSMIC identifiers.
+
+In this vignette dose response curves are fitted to the raw data using the *gdscIC50* package. The fitting model uses the whole data set to estimate the parameters for a sigmoidal dose response curve [(Vis, D.J. et al. Pharmacogenomics 2016, 17(7):691-700)](https://www.ncbi.nlm.nih.gov/pubmed/27180993). For more information on the curve fitting process please read the vignette contained in the *gdscIC50* package.
+
+```{r gdscIC50 vignette, eval = FALSE}
+vignette("gdscIC50")
+```
+
+In the website release of the v17 data the model fit used drug responses for compounds that were not subsequently released to the public. In this package those same compounds have already been removed from the data, hence the model fit will give slightly different results to those previously available. At the end of this vignette the results obtained are compared to the version 17a fitted data available for download from the canccerrxgene website (v17_fitted_dose_response.xlsx). 
+
+
+
+### Loading the data
+
+```{r Prelims, message=FALSE, warning=FALSE}
+library(gdscIC50)
+library(gdscdata)
+library(dplyr)
+data(gdsc_v17)
+head(gdsc_v17, 3)
+```
+
+Each row in the data frame represents the data for a single well in an experimental plate (384 well or 96 well). Each plate is assigned a BARCODE and a SCAN_ID when it is scanned by a plate reader. In the v17 data there is a one to one correspondence between BARCODE and SCAN_ID. Not all wells are reported for each plate because not all data is made public. The plate scan results in an INTENSITY measurement for each well. The treatment for each well is recorded in the TAG column. For more information on the raw data format including the tags please read the vignette contained in the *gdscIC50* package.
+
+```{r raw vignette, eval = FALSE}
+vignette("gdsc_raw_data_format")
+```
+
+#### Plate maps (drug set layout)
+
+If you just want to view the experimental design for a given drug set the plate maps are available in a single data frame. In previous releases of the data each plate map was if identified by a drug set, drug set version and format identifier. These have now been concatenated into a single DRUGSET_ID. The treatment descriptions used to differ from the new tags, these are shown as ORIG_TAG for completeness. All data processing using the *gdscIC50* package uses the TAG column. Well POSITIONs are counted row-wise with the row (DOWN) and column (ACROSS) coordinates are provided for completeness.
+
+```{r plate maps}
+data(gdsc_plate_maps)
+gdsc_plate_maps %>% filter(DRUGSET_ID == '16_b_7') %>% select(-DOWN, -ACROSS) %>% slice(99:109)
+```
+Wells that have been treated with drugs where the data are not publicly available have a DRUG_ID of NA.
+```{r private drug}
+gdsc_plate_maps %>% filter(DRUGSET_ID == '506_a_5', grepl("^L17", TAG))
+```
+The plate maps are not needed for the remainder of this vignette because the relevant information is already incorporated into the gdsc raw data.
+
+### Data filtering and normalization
+
+With the data loaded it can be processed using the *gdscIC50* package. First the data must be filtered for any treatments which have failed quality control ("failed drugs") and for any treatments where there is no matching DRUG_ID for a drug treatment TAG ("missing drugs"). The INTENSITY values for the drug treated wells are then normalized to the designated negative and positive control mean values for the plate in question.
+
+```{r filter and normalize}
+gdsc_v17 <- removeFailedDrugs(gdsc_v17)
+gdsc_v17 <- removeMissingDrugs(gdsc_v17)
+norm_data <- normalizeData(gdsc_v17, neg_control = "NC-0", pos_control = "B")
+```
+
+### Concentration scale normalization
+Individual drugs are screened at different concentration ranges. It is necessary for the dose response fit for the concentrations to be comparable between drugs. To this end the concentration ranges are normalized such that the maximum concentration is set to 9.  In some cases the same drug has been screened at a different concentration range. In this instance we treat these as separate drugs in the fitting by setting the group_conc_range parameter to false. For example, if two experiments had treated the same cell line with the same drug but at different concentrations, then the fitting will not treat these as replicate data with a single fit; two separate fits would result in two IC50 estimates.
+
+```{r setconcs}
+norm_data <- setConcsForNlme(norm_data, group_conc_ranges = F)
+```
+
+### Prepare the nlme input 
+Finally the data is wrangled into the format necessary for the curve fitting
+```{r prepNlme}
+gdsc_nlme_data <- prepNlmeData(norm_data, cl_id = "COSMIC_ID", drug_specifiers = c("DRUG_ID_lib", "maxc"))
+```
+
+### Fit the model
+```{r fit data, eval = F}
+gdsc_nlme_model <- fitModelNlmeData(gdsc_nlme_data, isLargeData = T)
+```
+
+### Fitted model post-processing
+Once the model has fitted, then a data frame of the fitted values can be prepared from the model including the IC50 estimates and area under the curve (AUC) values. There is a row in the data frame for every data point. We can make a separate data frame for the unique IC50 values.
+
+```{r stats from file, echo = F}
+data(gdsc_nlme_stats)
+```
+```{r calc stats, eval = F}
+gdsc_nlme_stats <- calcNlmeStats(nlme_model = gdsc_nlme_model, nlme_data = gdsc_nlme_data)
+```
+```{r ic50 summary}
+new_ic50s <- gdsc_nlme_stats %>% 
+  select(COSMIC_ID = CL, 
+         DRUG_ID = DRUG_ID_lib, 
+         MAX_CONC_MICROMOLAR = maxc, 
+         new_IC50 = IC50) %>% 
+  distinct()
+```
+
+### Download published data from the www.cancerrxgene.org website for comparison
+```{r download_v17a}
+if (!dir.exists("~/tmp/")){
+  dir.create("~/tmp/")
+  }
+download.file("ftp://ftp.sanger.ac.uk/pub/project/cancerrxgene/releases/release-6.0/v17_fitted_dose_response.xlsx", destfile = "~/tmp/v17_fitted_dose_response.xlsx")
+
+v17_web <- readxl::read_excel("~/tmp/v17_fitted_dose_response.xlsx")
+```
+
+### Compare newly fitted data with the published data.
+
+As previously discussed, two considerations arise when comparing with the data from the web:
+
+- The downloaded data has more results than the data in the package. This is due to cell lines that have been removed for quality control reasons since the data was released on the website.
+
+- The mixed effects model used to fit the data will produce different results depending on the size of the input data set. The data from the website are a subset of a larger fitted data set that included non-public experiments. Data from *gdscdata* are a subset of that larger data set but by refitting them we will obtain different results. 
+
+However, by plotting the results, newly estimated IC50s versus those from the web, we can see that there is little material difference between the estimates.
+
+```{r plot comparison, fig.align = "center", fig.width = 5, fig.height = 5}
+plot_data <- inner_join(new_ic50s,
+                        v17_web %>% rename(web_IC50 = LN_IC50))
+
+cor(plot_data$new_IC50, plot_data$web_IC50, method = "pearson")
+
+cor(plot_data$new_IC50, plot_data$web_IC50, method = "spearman")
+
+plot(new_IC50 ~ web_IC50, data = plot_data, pch = 20)
+
+```
+
+```{r compare results}
+# Number of published results
+v17_web %>% nrow()
+# Number of results from the gdscdata package
+new_ic50s %>% nrow()
+# Number of overlapping results
+intersect(v17_web %>% select(COSMIC_ID, DRUG_ID, MAX_CONC_MICROMOLAR), 
+          new_ic50s %>% select(COSMIC_ID, DRUG_ID, MAX_CONC_MICROMOLAR)) %>% 
+  nrow()
+# Missing results in v17 web data
+setdiff(v17_web %>% select(COSMIC_ID, DRUG_ID, MAX_CONC_MICROMOLAR), 
+          new_ic50s %>% select(COSMIC_ID, DRUG_ID, MAX_CONC_MICROMOLAR)) %>% 
+  nrow()
+# Missing results in gdscdata package
+setdiff(new_ic50s %>% select(COSMIC_ID, DRUG_ID, MAX_CONC_MICROMOLAR),
+        v17_web %>% select(COSMIC_ID, DRUG_ID, MAX_CONC_MICROMOLAR)) %>% 
+  nrow()
+# Missing cell lines in website 
+setdiff(v17_web %>% distinct(COSMIC_ID), 
+        new_ic50s %>% distinct(COSMIC_ID = CL)) %>% 
+  nrow()
+
+# Missing cell lines in gdscdata (COSMIC_ID has changed)
+setdiff(new_ic50s %>% distinct(COSMIC_ID = CL),
+        v17_web %>% distinct(COSMIC_ID)) %>% 
+  nrow()
+
+# Missing compounds in the website
+setdiff(v17_web %>% distinct(DRUG_ID), 
+        new_ic50s %>% distinct(DRUG_ID)) %>% 
+  nrow()
+# Missing compounds in gdscdata
+setdiff(new_ic50s %>% distinct(DRUG_ID),
+        v17_web %>% distinct(DRUG_ID)) %>% 
+  nrow()
+```
+
+
+
+
+
+
+
+
