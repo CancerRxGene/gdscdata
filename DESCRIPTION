@@ -1,6 +1,6 @@
 Package: gdscdata
 Title: Genomics of Drug Sensitivity in Cancer (GDSC) public dataset (version 17a)
-Version: 0.99.1
+Version: 0.99.2
 Authors@R: c(person("Howard", "Lightfoot", email = "cancerrxgene@sanger.ac.uk", role = c("aut", "cre")),
              person("Genome Research Limited", role = "cph")
              )
