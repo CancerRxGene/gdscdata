@@ -101,9 +101,11 @@ new_ic50s <- gdsc_nlme_stats %>%
 
 ### Download published data from the www.cancerrxgene.org website for comparison
 ```{r download_v17a}
-download.file("ftp://ftp.sanger.ac.uk/pub/project/cancerrxgene/releases/release-6.0/v17_fitted_dose_response.xlsx", destfile = "v17_fitted_dose_response.xlsx")
+download.file("ftp://ftp.sanger.ac.uk/pub/project/cancerrxgene/releases/release-6.0/v17_fitted_dose_response.xlsx",
+              destfile = "v17_fitted_dose_response.xlsx",
+              mode = "wb")
 
-v17_web <- readxl::read_excel("~/tmp/v17_fitted_dose_response.xlsx")
+v17_web <- readxl::read_excel("v17_fitted_dose_response.xlsx")
 file.remove("v17_fitted_dose_response.xlsx")
 ```
 
